@@ -1,0 +1,314 @@
+
+hdfs dfs -put /home/upx1099/data/cablecomplaints.csv /user/upx1099/Rohit/Project/Data/cablecomplaints.csv
+
+hive
+
+set hive.cli.print.current.db=true;
+
+
+-- Create a Database
+CREATE DATABASE IF NOT EXISTS 000upx1099
+COMMENT "Database Created by Rohit for BigData Project"
+WITH DBPROPERTIES('Date' = '2018-04-15', 'Creator' = 'Rohit Subudhi','Email' = 'rohit.subudhi@gmail.com');
+
+
+-- Use the Database
+USE 000upx1099;
+
+
+-- Create Table
+CREATE TABLE IF NOT EXISTS cable_complaints (date_of_complaint string, date_of_closure string, street string, city string, state string, zip int, cable_provider string, billing int, service int, internet int, telephone_answering_time int, reception int, construction int, marketing int, installation int, cable_service_availability int, cable_line_related int, telephone_service int, other int, type string, location string) ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' STORED AS TEXTFILE TBLPROPERTIES ("skip.header.line.count"="1");
+
+-- Load Data 
+LOAD DATA INPATH '/user/rohitsubudhi2537/Project/BigData_Project/cablecomplaints.csv' INTO TABLE cable_complaints;
+
+-- Select Data from the Table
+SELECT * FROM cable_complaints LIMIT 5;
+
+CREATE TABLE cable_complaints_d 
+AS
+  SELECT cast(to_date(from_unixtime(unix_timestamp(regexp_replace(date_of_complaint, '-', '/'), 'mm/dd/yyyy'))) AS date) date_of_complaint, 
+         cast(to_date(from_unixtime(unix_timestamp(regexp_replace(date_of_closure, '-', '/'), 'mm/dd/yyyy'))) AS date)   date_of_closure, 
+         street, 
+         city, 
+         state, 
+         CAST(zip AS int), 
+         cable_provider, 
+         CAST(billing AS int), 
+         CAST(service AS int), 
+         CAST(internet AS int), 
+         CAST(telephone_answering_time AS int), 
+         CAST(reception AS int), 
+         CAST(construction AS int), 
+         CAST(marketing AS int), 
+         CAST(installation AS int), 
+         CAST(cable_service_availability AS int), 
+         CAST(cable_line_related AS int), 
+         CAST(telephone_service AS int), 
+         CAST(other AS int), 
+         type, 
+         location
+    FROM cable_complaints;	
+
+
+-- Select Data from the Table
+SELECT * FROM cable_complaints_d LIMIT 5;
+
+
+-- 1) Display all the unique cable provider in city Rockville.
+SELECT DISTINCT cable_provider FROM cable_complaints_d WHERE city = 'Rockville';
+
+SELECT count(DISTINCT cable_provider) FROM cable_complaints_d;
+
+
+
+select regexp_extract(cable_provider,'^(\\w.*)\\\\(\\w.*)$',2) from cable_complaints_d LIMIT 5;
+
+SELECT split(cable_provider,'\\\\') from cable_complaints_d WHERE cable_provider LIKE '%\%'
+
+hdfs dfs -text /apps/hive/warehouse/upx1099.db/cable_complaints_1/000000_0.deflate | hdfs dfs -put - /user/upx1099/cable_complaints_1.csv
+
+
+-- 2) Display all the fields of the file whose location is starting from character 'C'.
+SELECT * 
+  FROM cable_complaints_d 
+ WHERE  UPPER(location) LIKE 'C%'
+    OR  UPPER(street) LIKE 'C%';
+
+
+SELECT COUNT(1)
+  FROM cable_complaints_d 
+ WHERE  UPPER(location) LIKE 'C%'
+    OR  UPPER(street) LIKE 'C%';
+
+-- 3) Count the number of internet complain in the city Ashton in the year 2008.
+SELECT COUNT(1)
+  FROM cable_complaints_d
+ WHERE UPPER(city) = 'ASHTON'
+   AND YEAR(date_of_complaint) = '2008';
+
+SELECT *
+  FROM cable_complaints_d
+ WHERE UPPER(city) = 'ASHTON'
+   AND YEAR(date_of_complaint) = '2008';
+
+
+
+-- 4) Display the cable provider, Zip code and city name for all those entries who have done inquiries.
+SELECT cable_provider, zip, city
+  FROM cable_complaints_d
+ WHERE UPPER(cable_provider) = 'INQUIRY';
+
+
+
+-- 5A) For all the users who have done billing complaint, and marked it as 'Y' and store it in file.
+INSERT OVERWRITE DIRECTORY '/user/rohitsubudhi2537/Project/BigData_Project/file1.csv' SELECT * FROM cable_complaints_d WHERE billing = 1;
+
+INSERT OVERWRITE DIRECTORY '/user/rohitsubudhi2537/Project/BigData_Project/file2'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+SELECT * 
+  FROM cable_complaints_d 
+ WHERE billing = 1
+   AND UPPER(cable_provider) <> 'INQUIRY'
+   AND date_of_closure   IS NOT NULL
+   AND date_of_complaint IS NOT NULL;
+
+
+-- 5B) For all the user who haven’t done any billing complaint and marked it as 'N' and store it in file.
+INSERT OVERWRITE DIRECTORY '/user/rohitsubudhi2537/Project/BigData_Project/file3'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+SELECT * 
+  FROM cable_complaints_d 
+ WHERE billing IS NULL
+   AND UPPER(cable_provider) <> 'INQUIRY'
+   AND date_of_closure   IS NULL
+   AND date_of_complaint IS NOT NULL;
+
+INSERT OVERWRITE DIRECTORY '/user/rohitsubudhi2537/Project/BigData_Project/file4'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT a.* 
+FROM 
+ (SELECT * 
+    FROM cable_complaints_d 
+   WHERE billing IS NULL
+     AND UPPER(cable_provider) <> 'INQUIRY'
+     AND date_of_closure   IS NULL
+     AND date_of_complaint IS NOT NULL) a;
+
+
+-- 5C) Finally combine both the files and store the final result.
+
+-- TEZ execution engine
+set hive.execution.engine=tez;
+-- Notifying that merge step is required
+set hive.merge.tezfiles=true; 
+set hive.merge.smallfiles.avgsize=128000000;
+set hive.merge.size.per.task=128000000;
+
+INSERT OVERWRITE DIRECTORY '/user/rohitsubudhi2537/Project/BigData_Project/file5'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\t'
+STORED AS TEXTFILE
+SELECT * 
+FROM cable_complaints_d 
+WHERE billing IS NULL
+AND UPPER(cable_provider) <> 'INQUIRY'
+AND date_of_closure   IS NULL
+AND date_of_complaint IS NOT NULL
+UNION ALL
+SELECT * 
+FROM cable_complaints_d 
+WHERE billing = 1
+AND UPPER(cable_provider) <> 'INQUIRY'
+AND date_of_closure   IS NOT NULL
+AND date_of_complaint IS NOT NULL;
+
+
+hdfs dfs -text /user/rohitsubudhi2537/Project/BigData_Project/file5/000000_0.deflate | hdfs dfs -put - /apps/hive/warehouse/upx1099.db/files/file2/output2
+
+/apps/hive/warehouse/upx1099.db/files/file3
+
+
+-- 6) Find the top 5 shortest resolution time amongst all the complaints made in all the categories. Display all the fields.
+-- Billing
+  CREATE TABLE cable_complaints_catl
+  AS
+  SELECT 'Billing' Category, (date_of_closure - date_of_complaint) Duration, a.* 
+    FROM cable_complaints_d a
+   WHERE a.billing IS NOT NULL
+     AND a.date_of_closure IS NOT NULL
+     AND a.date_of_complaint IS NOT NULL
+     AND a.date_of_closure >= a.date_of_complaint
+   ORDER BY (a.date_of_closure - a.date_of_complaint) ASC
+   LIMIT 5;
+
+-- Internet
+  INSERT INTO cable_complaints_catl
+  SELECT 'Internet' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d a
+   WHERE Internet IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- Service
+  INSERT INTO cable_complaints_catl
+  SELECT 'Service' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE service IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- Telephone_answering_time
+  INSERT INTO cable_complaints_catl
+  SELECT 'Telephone_answering_time' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE Telephone_answering_time IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- Reception
+  INSERT INTO cable_complaints_catl
+  SELECT 'Reception' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE reception IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- Construction
+  INSERT INTO cable_complaints_catl
+  SELECT 'Construction' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE construction IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- Marketing
+  INSERT INTO cable_complaints_catl
+  SELECT 'Marketing' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE marketing IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- installation
+  INSERT INTO cable_complaints_catl
+  SELECT 'installation' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE installation IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- cable_service_availability
+  INSERT INTO cable_complaints_catl
+  SELECT 'cable_service_availability' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE cable_service_availability IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+
+-- cable_line_related
+  INSERT INTO cable_complaints_catl
+  SELECT 'cable_line_related' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE cable_line_related IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+
+-- telephone_service
+  INSERT INTO cable_complaints_catl
+  SELECT 'telephone_service' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE telephone_service IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+-- other
+  INSERT INTO cable_complaints_catl
+  SELECT 'other' Category, (date_of_closure - date_of_complaint) Duration, * 
+    FROM cable_complaints_d
+   WHERE other IS NOT NULL
+     AND date_of_closure IS NOT NULL
+     AND date_of_complaint IS NOT NULL
+     AND date_of_closure >= date_of_complaint
+   ORDER BY (date_of_closure - date_of_complaint) ASC
+   LIMIT 5;
+
+SELECT Category, COUNT(1)
+  FROM cable_complaints_catl
+ GROUP BY Category
